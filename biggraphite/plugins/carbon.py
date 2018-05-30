@@ -154,14 +154,14 @@ class BigGraphiteDatabase(database.TimeSeriesDatabase):
         datapoints = [(int(timestamp), value)
                       for timestamp, value in datapoints]
 
-        # Writing every point synchronously increase CPU usage by ~300% as per https://goo.gl/xP5fD9
+        # Ensure backend handled all our previous requests
         if self._sync_countdown < 1:
-            self.accessor.insert_points(metric=metric, datapoints=datapoints)
+            self.accessor.wait_for_async_writes()
             self._sync_countdown = self._sync_every_n_writes
-        else:
-            self._sync_countdown -= 1
-            self.accessor.insert_points_async(
-                metric=metric, datapoints=datapoints)
+        
+        self.accessor.insert_points_async(
+            metric=metric, datapoints=datapoints)
+        self._sync_countdown -= 1
 
     @EXISTS_TIME.time()
     def exists(self, metric_name):

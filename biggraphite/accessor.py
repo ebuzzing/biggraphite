@@ -28,6 +28,10 @@ import math
 import re
 import threading
 import six
+from prometheus_client import Summary
+
+WAIT_FOR_WRITES_TIME = Summary(
+    'bg_wait_for_writes_time', 'Time spent waiting for async writes to complete')
 
 
 class Error(Exception):
@@ -73,29 +77,6 @@ def unpack_shard(shard):
     replica = (shard & SHARD_REPLICA_MASK) >> SHARD_REPLICA_SHIFT
     writer = (shard & SHARD_WRITER_MASK)
     return (replica, writer)
-
-
-def _wait_async_call(async_function, *args, **kwargs):
-    """Call async_function and synchronously wait for it to be done.
-
-    Args:
-      async_function: Function taking a on_done(e=None:Exception) callback.
-      *args: Passed down to async_function
-      **kwargs: Passed down to async_function
-    """
-    event = threading.Event()
-    exception_box = [None]
-
-    def on_done(exception):
-        exception_box[0] = exception
-        event.set()
-
-    async_function(*args, on_done=on_done, **kwargs)
-    # c.f. https://github.com/criteo/biggraphite/issues/296
-    # under higher load BG will freeze, blocking on this wait()
-    event.wait(3.0)
-    if exception_box[0]:
-        raise exception_box[0]
 
 
 def encode_metric_name(name):
@@ -701,6 +682,7 @@ class Accessor(object):
         self.cache = None
         self.cache_data_ttl = None
         self.cache_metadata_ttl = None
+        self._async_writes = None
 
     def __enter__(self):
         """Call connect()."""
@@ -875,8 +857,8 @@ class Accessor(object):
           datapoints: An iterable of (timestamp in seconds, values as double)
         """
         self._check_connected()
-        _wait_async_call(self.insert_points_async,
-                         metric=metric, datapoints=datapoints)
+        self.insert_points_async(metric=metric, datapoints=datapoints)
+        self.wait_for_async_writes()
 
     @abc.abstractmethod
     def insert_points_async(self, metric, datapoints, on_done=None):
@@ -898,9 +880,9 @@ class Accessor(object):
           metric: The metric definition as per get_metric.
           datapoints: An iterable of (timestamp in seconds, values as double, count as int, stage)
         """
-        self._check_connected()
-        _wait_async_call(
-            self.insert_downsampled_points_async, metric=metric, datapoints=datapoints)
+        self._check_connected()       
+        self.insert_downsampled_points_async(metric=metric, datapoints=datapoints)
+        self.wait_for_async_writes()
 
     @abc.abstractmethod
     def insert_downsampled_points_async(self, metric, datapoints, on_done=None):
@@ -981,6 +963,11 @@ class Accessor(object):
         """Remove metrics that have expired (not used anymore)."""
         self._check_connected()
 
+    @WAIT_FOR_WRITES_TIME.time()
+    def wait_for_async_writes(self):
+        """Wait for all async writes to complete"""
+        if self._async_writes != None:
+            self._async_writes.wait_zero()
 
 class PointGrouper(object):
     """Helper for client-side aggregator.
