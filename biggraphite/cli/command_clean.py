@@ -66,6 +66,10 @@ class CommandClean(command.BaseCommand):
             default=3 * 24 * 60 * 60,
             action='store'
         )
+        parser.add_argument(
+            "--skip-empty", action="store_const", default=False, const=True,
+            help="Skip clean empty dirs"
+        )
         command.add_sharding_arguments(parser)
 
     def run(self, accessor, opts, on_progress=None):
@@ -108,6 +112,7 @@ class CommandClean(command.BaseCommand):
                            shard=opts.shard, nshards=opts.nshards,
                            start_key=opts.start_key,
                            end_key=opts.end_key,
+                           skip_empty=opts.skip_empty,
                            callback_on_progress=on_progress)
 
         if opts.clean_corrupted:

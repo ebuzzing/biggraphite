@@ -1965,7 +1965,7 @@ class _CassandraAccessor(bg_accessor.Accessor):
                 callback_on_progress(token - start_token,
                                      stop_token - start_token)
 
-    def clean(self, max_age=None, start_key=None, end_key=None, shard=1, nshards=0,
+    def clean(self, max_age=None, start_key=None, end_key=None, skip_empty=False, shard=1, nshards=0,
               callback_on_progress=None):
         """See bg_accessor.Accessor.
 
@@ -1975,14 +1975,15 @@ class _CassandraAccessor(bg_accessor.Accessor):
         super(_CassandraAccessor, self).clean(max_age, callback_on_progress)
 
         first_exception = None
-        try:
-            self._clean_empty_dir(
-                start_key, end_key, shard, nshards,
-                callback_on_progress
-            )
-        except Exception as e:
-            first_exception = e
-            log.exception('Failed to clean directories.')
+        if not skip_empty:
+            try:
+                self._clean_empty_dir(
+                    start_key, end_key, shard, nshards,
+                    callback_on_progress
+                )
+            except Exception as e:
+                first_exception = e
+                log.exception('Failed to clean directories.')
 
         try:
             self._clean_expired_metrics(
